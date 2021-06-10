@@ -102,6 +102,42 @@ function Check-DNSChange {
 		}
 }
 
+#given a website such as "https://www.amazon.co.uk" return the domain, amazon.co.uk
+function ConvertTo-DomainName {
+	Param (
+		    [string]$URI = '',
+		    #get list of possible tlds from publicsuffix.org removing comments
+		    $TLDList = $(($(Invoke-RestMethod "https://publicsuffix.org/list/public_suffix_list.dat") -split '\r?\n').Trim() | Where-Object { $_ -notmatch '//' -and $_ -ne "" })
+	 )
+	#strip protocol from URI
+	$WebsiteAuthority = ([System.Uri]$URI).authority
+	Write-Verbose "Full Website Domain:$WebsiteAuthority" 
+  	#check number of levels in the domain
+	$split_domain = $WebsiteAuthority.Split(".")
+	#check if valid domain	
+	if ($split_domain.Length -ge 2) {
+		#get root level of domain
+		$Root = $dnsname = $split_domain[$split_domain.Length - 1]
+		$domain_level = 2
+		
+		#check if next level is part of TLD, if it is, move on to next level. stop when base domain is found
+		while ($TLDList -match $($dnsname + "$")) {
+			$dnsname = $split_domain[$split_domain.Length - $domain_level] + "." + $dnsname
+			$domain_level ++
+		}
+	}else {
+		Write-Error "Invalid Website Name"
+	}
+	
+	$domain = [PSCustomObject]@{
+		DomainName     = $dnsname
+		Root           = $Root
+		TopLevelDomain = $($dnsname.Split(".", 2)[1])
+	}
+  
+  	return $domain
+}
+
 #Get the Hudu API Module if not installed
 if (Get-Module -ListAvailable -Name HuduAPI) {
 		Import-Module HuduAPI 
@@ -156,8 +192,14 @@ if (!$Layout) {
 }
 
 $websites = Get-HuduWebsites | where -filter {$_.disable_dns -eq $false}
+
+#Get list of known Top Level Domains from publicsuffix.org and remove comments
+$tld_list = $(($(Invoke-RestMethod "https://publicsuffix.org/list/public_suffix_list.dat") -split '\r?\n').Trim() | Where-Object { $_ -notmatch '//' -and $_ -ne "" })
+
 foreach ($website in $websites){
-	$dnsname = ([System.Uri]$website.name).authority
+	
+	
+	$dnsname = (ConvertTo-DomainName -URI $website.name -TLDList $tld_list).DomainName
 	try {
 		$arecords = resolve-dnsname $dnsname -type A_AAAA -ErrorAction Stop | select type, IPADDRESS | sort IPADDRESS | convertto-html -fragment | out-string
 		$mxrecords = resolve-dnsname $dnsname -type MX -ErrorAction Stop | sort NameExchange |convertto-html -fragment -property NameExchange | out-string
