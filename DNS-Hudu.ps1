@@ -5,6 +5,9 @@ $HuduAPIKey = "abcdefghij123455"
 $HuduBaseDomain = "https://your.hudu.domain"
 $HuduAssetLayoutName = "DNS Entries - Autodoc"
 #####################################################################
+# Enable sending alerts on dns change to a slack webhook
+$enableSlackAlerts = $true
+$slackWebhook = "Your Slack Webhook URL"
 # Enable sending alerts on dns change to a teams webhook
 $enableTeamsAlerts = $true
 $teamsWebhook = "Your Teams Webhook URL"
@@ -29,6 +32,53 @@ function Check-DNSChange {
 	)
 	$Comp = Compare-Object -ReferenceObject $($currentDNS -split "`n") -DifferenceObject $($newDNS -split "`n")
 		if ($Comp){
+			# Send Slack Alert
+			if ($enableSlackAlerts) {
+				$JSONBody = [PSCustomObject][Ordered] @{
+					"blocks" = @(
+						@{
+							type = "section"
+							text = @{
+								type = "mrkdwn"
+								text = "*$companyName* - *$website* - DNS $recordType change detected"
+							}
+						},
+						@{
+							type   = "section"
+							fields = @(
+								@{
+								  type = "mrkdwn"
+								  text = "*Original DNS Records:*"
+								},
+								@{
+								  type = "mrkdwn"
+								  text = $((($Comp | where-object -filter { $_.SideIndicator -eq "<=" }).InputObject | out-string ) -replace '<[^>]+>', ' ')
+								},
+								@{
+								  type = "mrkdwn"
+								  text = "*New DNS Records:*"
+								},
+								@{
+								  type = "mrkdwn"
+								  text = $((($Comp | where-object -filter { $_.SideIndicator -eq "=>" }).InputObject | out-string ) -replace '<[^>]+>', ' ')
+								}
+							)            
+						}  
+					)
+				} 
+
+				$SlackMessageBody = ConvertTo-Json $JSONBody -Depth 100 
+
+				$parameters = @{
+				"URI"         = $slackWebhook
+				"Method"      = 'POST'
+				"Body"        = $SlackMessageBody
+				"ContentType" = 'application/json'
+				}
+
+				$result = Invoke-RestMethod @parameters
+				
+			}
 			# Send Teams Alert
 			if ($enableTeamsAlerts) {
 				$JSONBody = [PSCustomObject][Ordered]@{
